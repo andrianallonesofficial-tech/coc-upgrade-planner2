@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clash of Clans Priority & TH Cap Parser</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --card-bg: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --heading: #f0f6fc;
+      --gold: #d97706;
+      --elixir: #db2777;
+      --dark-elixir: #9333ea;
+      --green: #16a34a;
+      --blue: #2563eb;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg); color: var(--text); padding: 20px; max-width: 1100px; margin: 0 auto; }
+    h1 { color: var(--heading); margin-bottom: 8px; font-size: 1.6rem; }
+    p.subtitle { color: #8b949e; font-size: 0.9rem; margin-bottom: 20px; }
+
+    .layout { display: grid; grid-template-columns: 1fr; gap: 20px; }
+    @media(min-width: 800px) { .layout { grid-template-columns: 350px 1fr; } }
+
+    .panel { background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+    .panel h2 { font-size: 1.1rem; color: var(--heading); border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+
+    textarea {
+      width: 100%; height: 280px; background: #010409; border: 1px solid var(--border);
+      border-radius: 6px; color: #7ee787; font-family: monospace; font-size: 0.8rem; padding: 10px;
+      resize: vertical;
+    }
+
+    button {
+      width: 100%; padding: 10px; border-radius: 6px; border: none; font-weight: 600; cursor: pointer; font-size: 0.85rem;
+      background: #238636; color: white; transition: background 0.2s;
+    }
+    button:hover { background: #2ea043; }
+
+    .grid-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 10px; }
+    .stat-card { background: #0d1117; border: 1px solid var(--border); padding: 10px; border-radius: 6px; text-align: center; }
+    .stat-card .title { font-size: 0.75rem; color: #8b949e; }
+    .stat-card .val { font-size: 1.1rem; font-weight: bold; color: var(--heading); margin-top: 4px; }
+
+    .upgrade-stack { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .upgrade-row {
+      display: flex; justify-content: space-between; align-items: center;
+      background: #0d1117; border: 1px solid var(--border); border-left: 4px solid var(--border);
+      padding: 10px 14px; border-radius: 4px;
+    }
+    .upgrade-row.p1 { border-left-color: var(--elixir); }
+    .upgrade-row.p2 { border-left-color: var(--green); }
+    .upgrade-row.p3 { border-left-color: var(--gold); }
+    .upgrade-row.p4 { border-left-color: var(--blue); }
+    .upgrade-row.p5 { border-left-color: #8b949e; }
+
+    .name { font-weight: 600; color: var(--heading); font-size: 0.9rem; }
+    .desc { font-size: 0.78rem; color: #8b949e; }
+    .tag { font-size: 0.7rem; padding: 2px 6px; border-radius: 4px; text-transform: uppercase; font-weight: bold; }
+    .tag-offense { background: rgba(219, 39, 119, 0.2); color: var(--elixir); }
+    .tag-resource { background: rgba(22, 163, 74, 0.2); color: var(--green); }
+    .tag-defense { background: rgba(217, 119, 6, 0.2); color: var(--gold); }
+    .tag-wall { background: rgba(139, 148, 158, 0.2); color: #8b949e; }
+  </style>
+</head>
+<body>
+
+  <h1>Clash of Clans Priority & TH Cap Optimizer</h1>
+  <p class="subtitle">Parses raw integer data, validates against TH caps, and ranks priority queue.</p>
+
+  <div class="layout">
+    <div class="panel">
+      <h2>Raw JSON Input</h2>
+      <textarea id="jsonBox" placeholder="Paste your raw JSON output here..."></textarea>
+      <button onclick="processJSON()">Analyze Priority Queue</button>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 20px;">
+      <div class="panel">
+        <h2>Detected Village Cap Validation</h2>
+        <div class="grid-stats">
+          <div class="stat-card">
+            <div class="title">Town Hall</div>
+            <div class="val" id="thVal" style="color: var(--gold);">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="title">Laboratory</div>
+            <div class="val" id="labVal">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="title">Army Camps</div>
+            <div class="val" id="campVal">-</div>
+          </div>
+          <div class="stat-card">
+            <div class="title">Walls Under Cap</div>
+            <div class="val" id="wallVal">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Ordered Upgrade Sequence</h2>
+        <div class="upgrade-stack" id="queueList">
+          <div style="text-align: center; color: #8b949e; padding: 20px; font-size: 0.9rem;">
+            Paste JSON and click "Analyze Priority Queue".
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Max level lookup table indexed by [Town Hall Level]
+    const TH_CAPS = {
+      5: {
+        buildings: {
+          1000000: { name: "Army Camp", max: 5, p: 1, cat: "offense" },
+          1000002: { name: "Elixir Collector", max: 9, p: 2, cat: "resource" },
+          1000003: { name: "Elixir Storage", max: 9, p: 2, cat: "resource" },
+          1000004: { name: "Gold Mine", max: 9, p: 2, cat: "resource" },
+          1000005: { name: "Cannon", max: 6, p: 4, cat: "defense" },
+          1000006: { name: "Barracks", max: 7, p: 1, cat: "offense" },
+          1000007: { name: "Laboratory", max: 3, p: 1, cat: "offense" },
+          1000008: { name: "Gold Storage", max: 9, p: 2, cat: "resource" },
+          1000009: { name: "Archer Tower", max: 6, p: 4, cat: "defense" },
+          1000010: { name: "Wall", max: 5, p: 5, cat: "wall" },
+          1000011: { name: "Wizard Tower", max: 2, p: 3, cat: "defense" },
+          1000012: { name: "Air Defense", max: 3, p: 3, cat: "defense" },
+          1000013: { name: "Mortar", max: 3, p: 3, cat: "defense" },
+          1000014: { name: "Clan Castle", max: 2, p: 1, cat: "offense" },
+          1000020: { name: "Spell Factory", max: 1, p: 1, cat: "offense" }
+        },
+        units: {
+          4000000: { name: "Barbarian", max: 3, p: 1 },
+          4000001: { name: "Archer", max: 3, p: 1 },
+          4000002: { name: "Goblin", max: 3, p: 2 },
+          4000003: { name: "Giant", max: 3, p: 1 },
+          4000004: { name: "Wall Breaker", max: 2, p: 2 },
+          4000005: { name: "Balloon", max: 2, p: 2 },
+          4000006: { name: "Wizard", max: 2, p: 1 },
+          26000000: { name: "Lightning Spell", max: 4, p: 1 }
+        }
+      }
+    };
+
+    function processJSON() {
+      const rawText = document.getElementById('jsonBox').value.trim();
+      if (!rawText) return;
+
+      let parsed;
+      try { parsed = JSON.parse(rawText); } catch (e) { alert("Invalid JSON string format."); return; }
+
+      // Get TH level
+      const thObj = (parsed.buildings || []).find(b => b.data === 1000001);
+      const thLvl = thObj ? thObj.lvl : 5;
+      document.getElementById('thVal').textContent = thLvl;
+
+      const caps = TH_CAPS[thLvl] || TH_CAPS[5]; // Fallback to TH5 matrix
+
+      // Basic stats UI
+      const lab = (parsed.buildings || []).find(b => b.data === 1000007);
+      document.getElementById('labVal').textContent = lab ? `${lab.lvl}/${caps.buildings[1000007].max}` : 'N/A';
+
+      const camps = (parsed.buildings || []).filter(b => b.data === 1000000);
+      const minCamp = camps.length ? Math.min(...camps.map(c => c.lvl)) : 0;
+      document.getElementById('campVal').textContent = `${minCamp}/${caps.buildings[1000000].max}`;
+
+      // Wall analysis
+      let underCapWalls = 0;
+      (parsed.buildings || []).filter(b => b.data === 1000010).forEach(w => {
+        if (w.lvl < caps.buildings[1000010].max) {
+          underCapWalls += (w.cnt || 1);
+        }
+      });
+      document.getElementById('wallVal').textContent = `${underCapWalls} Segments`;
+
+      const queue = [];
+
+      // Parse & Cap-check Buildings
+      (parsed.buildings || []).forEach(b => {
+        const capInfo = caps.buildings[b.data];
+        if (capInfo && b.lvl < capInfo.max) {
+          queue.push({
+            name: capInfo.name,
+            desc: `Count: ${b.cnt || 1} | Level ${b.lvl} ➔ Target Level ${capInfo.max} (TH${thLvl} Max Cap)`,
+            cat: capInfo.cat,
+            p: capInfo.p
+          });
+        }
+      });
+
+      // Parse & Cap-check Lab Units
+      (parsed.units || []).forEach(u => {
+        const capInfo = caps.units[u.data];
+        if (capInfo && u.lvl < capInfo.max) {
+          queue.push({
+            name: `Lab: ${capInfo.name}`,
+            desc: `Level ${u.lvl} ➔ Target Level ${capInfo.max} (TH${thLvl} Max Cap)`,
+            cat: 'offense',
+            p: 1
+          });
+        }
+      });
+
+      // Sort Queue by Priority Number ASC
+      queue.sort((a, b) => a.p - b.p);
+
+      const queueList = document.getElementById('queueList');
+      queueList.innerHTML = '';
+
+      queue.forEach(item => {
+        const div = document.createElement('div');
+        div.className = `upgrade-row p${item.p}`;
+        div.innerHTML = `
+          <div>
+            <div class="name">${item.name}</div>
+            <div class="desc">${item.desc}</div>
+          </div>
+          <span class="tag tag-${item.cat}">${item.cat}</span>
+        `;
+        queueList.appendChild(div);
+      });
+    }
+  </script>
+</body>
+</html>
